@@ -77,3 +77,4 @@ The start_http_server(port) runs a separate thread, exposing metrics for Prometh
 
 ------------
 max(pg_stat_statements_max_time_seconds)
+topk(5, rate(pg_stat_statements_total_time[5m]) / rate(pg_stat_statements_calls[5m]))
