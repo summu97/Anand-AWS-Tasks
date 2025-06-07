@@ -83,3 +83,12 @@ topk(5, rate(pg_stat_statements_total_time[5m]) / rate(pg_stat_statements_calls[
 SELECT pid, state, query, now() - query_start AS duration
 FROM pg_stat_activity
 WHERE state = 'active';
+
+SELECT
+  now() AS time,
+  pid,
+  state,
+  query,
+  now() - query_start AS duration
+FROM pg_stat_activity
+WHERE state = 'active';
