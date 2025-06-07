@@ -74,3 +74,6 @@ rate(db_query_duration_seconds_sum[1m]) / rate(db_query_duration_seconds_count[1
 Notes:
 Don't expose :8000/metrics to the public — keep it internal or protected.
 The start_http_server(port) runs a separate thread, exposing metrics for Prometheus.
+
+------------
+max(pg_stat_statements_max_time_seconds)
