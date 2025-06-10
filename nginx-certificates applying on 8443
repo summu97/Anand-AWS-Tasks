@@ -77,3 +77,31 @@ sudo lsof -i :8443
 sudo ufw allow 8443/tcp
 sudo ufw reload
 sudo ufw status
+-------------------------------------
+server {
+    listen 80;
+    server_name n8n.techdomeaks.com;
+
+    return 301 https://$host$request_uri;
+}
+
+server {
+    listen 443 ssl;
+    server_name n8n.techdomeaks.com;
+
+    ssl_certificate     /etc/nginx/ssl/n8n.techdome.crt;
+    ssl_certificate_key /etc/nginx/ssl/n8n.techdome.key;
+
+    location / {
+        proxy_pass http://4.247.31.1:5678/;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+
+        proxy_redirect http://4.247.31.1:5678/ https://n8n.techdomeaks.com/;
+    }
+}
