@@ -130,3 +130,55 @@ No disruption to existing hosted applications
 Compliance with default port expectations for mail services (e.g., SMTP, IMAP, HTTPS)
 
 Please let me know your thoughts or if you'd prefer an alternative approach such as reverse proxying with NGINX, though that could introduce added complexity.
+-----------------------
+1. Max, Avg Query Time
+SELECT
+  query,
+  calls,
+  round(mean_time, 2) AS avg_time_ms,
+  round(max_time, 2) AS max_time_ms,
+  total_time::numeric(10,2),
+  rows
+FROM pg_stat_statements
+ORDER BY mean_time DESC
+LIMIT 10;
+
+This will show:
+Query text
+Number of executions
+Avg and max execution time
+Total time spent
+Rows returned
+
+
+
+ Top Queries by Total Time Spent
+SELECT
+  query,
+  total_time,
+  calls,
+  round(total_time / calls, 2) AS avg_time_per_call
+FROM pg_stat_statements
+ORDER BY total_time DESC
+LIMIT 10;
+
+Percentile Estimation (p95, p99)
+PostgreSQL’s pg_stat_statements doesn’t give percentile metrics by default. However, if your query logs or a custom table records per-query durations, you can do:
+SELECT
+  percentile_disc(0.95) WITHIN GROUP (ORDER BY duration) AS p95,
+  percentile_disc(0.99) WITHIN GROUP (ORDER BY duration) AS p99
+FROM query_duration_log;
+
+
+For this to work, you'd need to log each query's execution time in a table like query_duration_log(query TEXT, duration FLOAT, time TIMESTAMP).
+
+
+4. Add Time Filter in Grafana
+To allow filtering over time (e.g., last 24h), your SQL must reference a timestamp column and add:
+WHERE $__timeFilter(timestamp_column)
+
+But pg_stat_statements doesn't store per-query timestamps, so if you need filtering over time ranges, you’ll need to:
+
+Log queries yourself (with triggers or event triggers)
+
+Or use pg_stat_statements_reset() manually to "start fresh" and analyze from that point onward
