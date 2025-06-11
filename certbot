@@ -1,24 +1,106 @@
-Step-01:
-sudo vim /etc/nginx/sites-available/<your_application_name>
+Create or modify the Nginx config: 
+sudo vim /etc/nginx/sites-available/n8n.techdomeaks.com
 
 server {
     listen 80;
-    server_name <domain_name>.com;
+    listen [::]:80;
+    server_name n8n.techdomeaks.com;
+    return 301 https://$host$request_uri;
+}
+
+server {
+    listen 443 ssl;
+    listen [::]:443 ssl;
+    server_name n8n.techdomeaks.com;
+
+    ssl_certificate /etc/letsencrypt/live/n8n.techdomeaks.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/n8n.techdomeaks.com/privkey.pem;
+    include /etc/letsencrypt/options-ssl-nginx.conf;
+    ssl_dhparam /etc/letsencrypt/ssl-dhparams.pem;
 
     location / {
-        proxy_pass http://4.247.31.1:3000;
+        proxy_pass http://135.13.13.70:5678/;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+
+        proxy_redirect http://135.13.13.70:5678/ https://n8n.techdomeaks.com/;
     }
 }
 
+sudo vim /etc/nginx/sites-available/mail.techdomeaks.com
 
-Step-02:
-sudo ln -s /etc/nginx/sites-available/<your_application_name> /etc/nginx/sites-enabled/
+server {
+    listen 80;
+    listen [::]:80;
+    server_name mail.techdomeaks.com;
+    return 301 https://$host$request_uri;
+}
 
-Step-03:
+server {
+    listen 443 ssl;
+    listen [::]:443 ssl;
+    server_name mail.techdomeaks.com;
+
+    ssl_certificate /etc/letsencrypt/live/mail.techdomeaks.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/mail.techdomeaks.com/privkey.pem;
+    include /etc/letsencrypt/options-ssl-nginx.conf;
+    ssl_dhparam /etc/letsencrypt/ssl-dhparams.pem;
+
+    location / {
+        proxy_pass http://135.13.13.70:2443/;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+
+        proxy_redirect http://135.13.13.70:2443/ https://mail.techdomeaks.com/;
+    }
+}
+
+sudo vim /etc/nginx/sites-available/flowise.techdomeaks.com
+
+server {
+    listen 80;
+    listen [::]:80;
+    server_name flowise.techdomeaks.com;
+    return 301 https://$host$request_uri;
+}
+
+server {
+    listen 443 ssl;
+    listen [::]:443 ssl;
+    server_name flowise.techdomeaks.com;
+
+    ssl_certificate /etc/letsencrypt/live/flowise.techdomeaks.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/flowise.techdomeaks.com/privkey.pem;
+    include /etc/letsencrypt/options-ssl-nginx.conf;
+    ssl_dhparam /etc/letsencrypt/ssl-dhparams.pem;
+
+    location / {
+        proxy_pass http://135.13.13.70:3000/;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+
+        proxy_redirect http://135.13.13.70:3000/ https://flowise.techdomeaks.com/;
+    }
+}
+
+Enable the Site and Reload Nginx:
+sudo ln -s /etc/nginx/sites-available/n8n.techdomeaks.com /etc/nginx/sites-enabled/
+sudo ln -s /etc/nginx/sites-available/flowise.techdomeaks.com /etc/nginx/sites-enabled/
+sudo ln -s /etc/nginx/sites-available/mail.techdomeaks.com /etc/nginx/sites-enabled/
 sudo nginx -t
 sudo systemctl reload nginx
-
-Step-04:
-sudo certbot --nginx -d <domain_name>.com
