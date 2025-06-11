@@ -104,3 +104,29 @@ sudo ln -s /etc/nginx/sites-available/flowise.techdomeaks.com /etc/nginx/sites-e
 sudo ln -s /etc/nginx/sites-available/mail.techdomeaks.com /etc/nginx/sites-enabled/
 sudo nginx -t
 sudo systemctl reload nginx
+----------------------------------
+I wanted to inform you about an issue I encountered while deploying the Billionmail application on our current VM.
+
+Billionmail requires ports 80 and 443 for its web and secure mail services. However, these ports are already in use by two other applications that are hosted via NGINX, and are configured with certificates and domain names.
+
+Due to this port conflict, Billionmail is failing to start and cannot bind to the required ports.
+
+🛠 Troubleshooting Done:
+Verified container configuration and exposed ports
+
+Confirmed NGINX is already using 80/443 for existing services
+
+Considered alternative ports (e.g., 8080/8443) but this may not be optimal for production email access which relies on standard ports
+
+✅ Proposed Solution:
+To avoid impacting the existing services, I suggest deploying Billionmail on a separate server or VM where it can use ports 80 and 443 without conflict.
+
+This would ensure:
+
+Clean separation of services
+
+No disruption to existing hosted applications
+
+Compliance with default port expectations for mail services (e.g., SMTP, IMAP, HTTPS)
+
+Please let me know your thoughts or if you'd prefer an alternative approach such as reverse proxying with NGINX, though that could introduce added complexity.
