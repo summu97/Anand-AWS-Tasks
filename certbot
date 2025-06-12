@@ -36,15 +36,12 @@ sudo vim /etc/nginx/sites-available/mail.techdomeaks.com
 
 server {
     listen 80;
-    listen [::]:80;
     server_name mail.techdomeaks.com;
-
     return 301 https://$host$request_uri;
 }
 
 server {
     listen 443 ssl;
-    listen [::]:443 ssl;
     server_name mail.techdomeaks.com;
 
     ssl_certificate /etc/letsencrypt/live/mail.techdomeaks.com/fullchain.pem;
@@ -54,16 +51,21 @@ server {
 
     location / {
         proxy_pass https://135.13.13.70:2443/billion;
-        proxy_http_version 1.1;
 
+        proxy_http_version 1.1;
         proxy_set_header Upgrade $http_upgrade;
         proxy_set_header Connection "upgrade";
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-Forwarded-Host $host;
 
-        proxy_redirect https://135.13.13.70:2443/billion https://mail.techdomeaks.com/;
+        # REMOVE THIS ↓ if backend handles its own redirects
+        # proxy_redirect https://135.13.13.70:2443/billion https://mail.techdomeaks.com/;
+        
+        # Optional if backend uses self-signed cert
+        proxy_ssl_verify off;
     }
 }
 
