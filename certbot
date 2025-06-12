@@ -179,3 +179,37 @@ But pg_stat_statements doesn't store per-query timestamps, so if you need filter
 Log queries yourself (with triggers or event triggers)
 
 Or use pg_stat_statements_reset() manually to "start fresh" and analyze from that point onward
+
+
+
+
+--------------------------------
+- To find queries taking maximum or average time (already supported in Dashboard ID 9628):
+| Metric Name                                | What it tells you                      |
+| ------------------------------------------ | -------------------------------------- |
+| `pg_stat_statements_query_stats_calls`     | How many times each query was executed |
+| `pg_stat_statements_query_stats_max_time`  | Maximum execution time for each query  |
+| `pg_stat_statements_query_stats_mean_time` | Average execution time for each query  |
+
+Use case:
+Identify queries with highest average response time.
+Spot queries with spikes in execution time.
+
+
+- To calculate P95/P99 latency (requires histogram data):
+| Metric Name                                          | Purpose                                        |
+| ---------------------------------------------------- | ---------------------------------------------- |
+| `pg_stat_statements_query_duration_histogram_bucket` | Required for calculating percentiles (p95/p99) |
+| `pg_stat_statements_query_duration_histogram_count`  | Count of queries in each histogram bucket      |
+| `pg_stat_statements_query_duration_histogram_sum`    | Total duration of all queries in a bucket      |
+
+
+
+Use case:
+Use Prometheus function histogram_quantile(0.95, ...) or histogram_quantile(0.99, ...) to visualize query latency percentiles over time.
+
+Final Summary:
+| Use Case               | Dashboard 9628 | Extra Setup Needed                       |
+| ---------------------- | -------------- | ---------------------------------------- |
+| Max/Average Query Time | ✅ Yes          | ❌ No                                     |
+| Query Latency P95/P99  | ❌ No           | ✅ Yes (histogram support, custom panels) |
