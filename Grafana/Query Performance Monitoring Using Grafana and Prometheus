@@ -1,0 +1,268 @@
+sudo -i -u postgres
+psql
+(A termina will open)
+
+
+To get query timing metrics (like mean_time, max_time, calls), you need to:
+1. Enable pg_stat_statements extension in PostgreSQL
+Run this in your PostgreSQL database as a superuser:
+CREATE EXTENSION IF NOT EXISTS pg_stat_statements;
+
+
+Check it's working:
+SELECT * FROM pg_stat_statements LIMIT 5;
+
+2. Enable the shared_preload_libraries setting
+You must restart PostgreSQL with the following in your postgresql.conf: sudo vim /etc/postgresql/*/main/postgresql.conf
+shared_preload_libraries = 'pg_stat_statements'
+
+Also make sure these are configured:
+pg_stat_statements.track = all
+pg_stat_statements.save = on
+
+Then restart PostgreSQL.
+
+3. Use a custom queries.yaml with postgres_exporter
+Create /opt/postgres_exporter/queries.yaml with:
+
+pg_stat_statements:
+  query_stats:
+    query: |
+      SELECT
+        queryid,
+        query,
+        calls,
+        total_time,
+        mean_time,
+        max_time
+      FROM pg_stat_statements
+      WHERE calls > 0
+    metrics:
+      - queryid:
+          usage: "LABEL"
+          description: "Query ID"
+      - query:
+          usage: "LABEL"
+          description: "Query text"
+      - calls:
+          usage: "COUNTER"
+          description: "Number of times executed"
+      - total_time:
+          usage: "COUNTER"
+          description: "Total execution time of query"
+      - mean_time:
+          usage: "GAUGE"
+          description: "Average execution time"
+      - max_time:
+          usage: "GAUGE"
+          description: "Max execution time"
+
+
+
+
+4. Run postgres_exporter with that file:
+ To Run postgres_exporter in the Background
+sudo vim /etc/systemd/system/postgres_exporter.service
+
+
+[Unit]
+Description=PostgreSQL Exporter
+After=network.target
+
+[Service]
+Environment=DATA_SOURCE_NAME=postgresql://testuser:testpass@localhost:5432/testdb?sslmode=disable
+ExecStart=/opt/postgres_exporter/postgres_exporter --extend.query-path=/opt/postgres_exporter/queries.yaml --log.level=debug
+WorkingDirectory=/opt/postgres_exporter
+Restart=always
+
+[Install]
+WantedBy=multi-user.target
+
+sudo systemctl daemon-reexec
+sudo systemctl daemon-reload
+sudo systemctl start postgres_exporter
+sudo systemctl enable postgres_exporter
+
+sudo systemctl status postgres_exporter
+
+
+Then open:
+➡️ http://<your_vm_ip>:9187/metrics
+You should now see metrics like:
+
+pg_stat_statements_calls
+
+pg_stat_statements_mean_time
+
+pg_stat_statements_max_time
+
+5. In Grafana, you can now use:
+pg_stat_statements_mean_time{query!~".*pg_stat_statements.*"}
+
+Or:
+topk(5, pg_stat_statements_max_time)
+
+--------------------
+curl http://localhost:9187/metrics | grep pg_stat_statements
+
+pg_stat_statements_query_stats_calls{queryid="...", query="..."} 100
+pg_stat_statements_query_stats_mean_time{...} 12.34
+pg_stat_statements_query_stats_max_time{...} 54.21
+
+we want these metrics from postgresql:
+pg_stat_statements_query_stats_calls
+pg_stat_statements_query_stats_max_time
+pg_stat_statements_query_stats_mean_time
+
+Once everything is running fine then in Grafana dashboard:
+Panel Title: Top Queries by Avg/Max Execution Time
+topk(10, pg_stat_statements_query_stats_mean_time)
+
+In Visualization, use Table or Bar chart(bar chart is giving more flexibility).
+Add Tooltip mode: All series for readability.
+-------------
+Option-01: p95 and p99 Percentile (Rolling Window)
+To calculate percentiles, you'll need to switch from direct pg_stat_statements use to using histogram data.
+Unfortunately, pg_stat_statements only gives aggregates, not histograms — so you need to:
+use: 9628
+This gives you:
+Top queries by latency, execution count, total time
+---
+What #9628 does give you:
+Top slowest queries
+
+Total execution time per query
+
+Mean execution time
+
+Call count
+
+Rows affected
+
+IO timing (if enabled)
+---
+Auto time filtering
+Drill-downs by queryid
+
+Option B (Advanced): Create Custom p95/p99 Percentile Panels
+If you export histogram buckets manually using a wrapper function (or another collector like pg_bouncer_exporter), you could do:
+histogram_quantile(0.95, rate(your_histogram_bucket[5m]))
+------------------
+Add Time Filter to All Panels
+pg_stat_statements_query_stats_mean_time
+-----------------------------
+Here’s a clear step-by-step guide to create the pg_stat_statements extension and make it usable by postgres_exporter:
+Step 1: Connect to PostgreSQL
+sudo -u postgres psql
+
+Step 2: Connect to the Correct Database (testdb)
+\c testdb
+
+Step 3: Create the pg_stat_statements Extension
+CREATE EXTENSION pg_stat_statements;
+
+You should see: CREATE EXTENSION
+
+Command to View Query Statistics:
+SELECT *
+FROM pg_stat_statements
+ORDER BY total_time DESC
+LIMIT 10;
+
+To See p95, p99 Latency of Queries:
+-  Use a subquery for p95/p99 percentiles
+SELECT
+  query,
+  calls,
+  total_time,
+  mean_time,
+  min_time,
+  max_time
+FROM
+  pg_stat_statements
+ORDER BY
+  total_time DESC
+LIMIT 10;
+
+Then calculate p95/p99 across all mean_time using:
+SELECT
+  percentile_disc(0.95) WITHIN GROUP (ORDER BY mean_time) AS p95,
+  percentile_disc(0.99) WITHIN GROUP (ORDER BY mean_time) AS p99
+FROM
+  pg_stat_statements;
+
+---------------------
+directly run SQL queries on PostgreSQL to verify what data is available and check if your bucket calculations are meaningful.
+sudo -u postgres psql
+
+SELECT
+  queryid,
+  width_bucket(total_time / NULLIF(calls, 0), 0, 1000, 20) * 50 AS le,
+  COUNT(*) AS count
+FROM pg_stat_statements
+WHERE calls > 0
+GROUP BY queryid, le
+ORDER BY le;
+
+p95, p99 (Required Metrics for Percentile Calculations):
+pg_stat_statements_query_duration_histogram_bucket{le="..."}
+→ Buckets of durations (e.g., le="50", le="100", etc.)
+pg_stat_statements_query_duration_histogram_count
+→ Total number of observations (used for percentile math)
+pg_stat_statements_query_duration_histogram_sum
+→ Total sum of all durations (used for average, etc.)
+-----------to check if its available:
+sudo -u postgres psql
+-------------------
+. p95 Query Duration (95th Percentile)
+histogram_quantile(0.95, sum(rate(pg_stat_statements_query_duration_histogram_le[5m])) by (le, queryid))
+Shows 95th percentile duration per queryid.
+
+Change 0.95 to 0.99 for p99.
+
+Adjust [5m] as needed for longer time windows (e.g., [15m] or [1h]).
+---
+Total Time Spent per Query
+sum by (queryid) (rate(pg_stat_statements_query_duration_histogram_sum[5m]))
+
+Number of Executions per Query
+sum by (queryid) (rate(pg_stat_statements_query_duration_histogram_count[5m]))
+-------------
+For p95:
+histogram_quantile(0.95, sum(rate(pg_stat_statements_query_duration_histogram_le[5m])) by (le, queryid))
+
+For p99:
+histogram_quantile(0.99, sum(rate(pg_stat_statements_query_duration_histogram_le[5m])) by (le, queryid))
+
+
+
+
+- To find queries taking maximum or average time (already supported in Dashboard ID 9628):
+| Metric Name                                | What it tells you                      |
+| ------------------------------------------ | -------------------------------------- |
+| `pg_stat_statements_query_stats_calls`     | How many times each query was executed |
+| `pg_stat_statements_query_stats_max_time`  | Maximum execution time for each query  |
+| `pg_stat_statements_query_stats_mean_time` | Average execution time for each query  |
+
+Use case:
+Identify queries with highest average response time.
+Spot queries with spikes in execution time.
+
+
+- To calculate P95/P99 latency (requires histogram data):
+| Metric Name                                          | Purpose                                        |
+| ---------------------------------------------------- | ---------------------------------------------- |
+| `pg_stat_statements_query_duration_histogram_bucket` | Required for calculating percentiles (p95/p99) |
+| `pg_stat_statements_query_duration_histogram_count`  | Count of queries in each histogram bucket      |
+| `pg_stat_statements_query_duration_histogram_sum`    | Total duration of all queries in a bucket      |
+
+
+
+Use case:
+Use Prometheus function histogram_quantile(0.95, ...) or histogram_quantile(0.99, ...) to visualize query latency percentiles over time.
+
+Final Summary:
+| Use Case               | Dashboard 9628 | Extra Setup Needed                       |
+| ---------------------- | -------------- | ---------------------------------------- |
+| Max/Average Query Time | ✅ Yes          | ❌ No                                     |
+| Query Latency P95/P99  | ❌ No           | ✅ Yes (histogram support, custom panels) |
