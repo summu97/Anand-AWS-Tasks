@@ -1,0 +1,112 @@
+Prerequisites:
+A Python-based API, such as Flask, Django, or FastAPI.
+You must have Prometheus installed and configured to scrape metrics.
+Grafana should be set up to read from Prometheus.
+---
+Step-by-Step: Implementing in a Python App
+
+Step 1: Install Prometheus client library
+Cmnd: pip install prometheus_client
+---
+
+Step 2: Sample Flask App with Metrics
+
+from flask import Flask
+from prometheus_client import start_http_server, Histogram
+import time
+import random
+
+app = Flask(__name__)
+
+# Define histograms
+REQUEST_TIME = Histogram('api_request_duration_seconds', 'API response time in seconds', ['endpoint'])
+DB_QUERY_TIME = Histogram('db_query_duration_seconds', 'DB query response time')
+
+# Start Prometheus metrics server on a different port (e.g., 8000)
+start_http_server(8000)  # Prometheus will scrape from here
+
+@app.route('/myapi')
+def my_api():
+    with REQUEST_TIME.labels('/myapi').time():
+        # Simulate DB query
+        run_query()
+        return "Hello from /myapi!"
+
+def run_query():
+    with DB_QUERY_TIME.time():
+        time.sleep(random.uniform(0.1, 0.5))  # Simulate query time
+
+if __name__ == '__main__':
+    app.run(host='0.0.0.0', port=5000)
+
+
+Result:
+Your API is running at: http://localhost:5000/myapi
+Your Prometheus metrics are exposed at: http://localhost:8000/metrics
+---
+
+Step 3: Configure Prometheus to Scrape Metrics
+In your Prometheus config (prometheus.yml), add:
+
+scrape_configs:
+  - job_name: 'my-flask-app'
+    static_configs:
+      - targets: ['localhost:8000']  # The metrics endpoint exposed by your app
+
+
+Then restart Prometheus.
+---
+
+Step 4: Visualize in Grafana
+In Grafana:
+Add Prometheus as a data source
+---
+
+Create a Dashboard
+Add a Time Series panel with this query:
+
+histogram_quantile(0.95, rate(api_request_duration_seconds_bucket[5m]))
+
+or for DB:
+rate(db_query_duration_seconds_sum[1m]) / rate(db_query_duration_seconds_count[1m])
+
+
+Notes:
+Don't expose :8000/metrics to the public — keep it internal or protected.
+The start_http_server(port) runs a separate thread, exposing metrics for Prometheus.
+
+------------
+max(pg_stat_statements_max_time_seconds)
+topk(5, rate(pg_stat_statements_total_time[5m]) / rate(pg_stat_statements_calls[5m]))
+
+
+SELECT pid, state, query, now() - query_start AS duration
+FROM pg_stat_activity
+WHERE state = 'active';
+
+SELECT
+  now() AS time,
+  pid,
+  state,
+  query,
+  now() - query_start AS duration
+FROM pg_stat_activity
+WHERE state = 'active';
+
+
+SELECT
+  now() AS time,
+  pid,
+  usename,
+  datname,
+  application_name,
+  client_addr,
+  state,
+  now() - query_start AS duration,
+  query
+FROM pg_stat_activity
+WHERE state = 'active'
+  AND query NOT ILIKE '%pg_stat_activity%'
+ORDER BY duration DESC;
+
+SELECT * FROM pg_extension WHERE extname = 'pg_stat_statements';
