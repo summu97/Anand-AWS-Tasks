@@ -1,0 +1,42 @@
+adduser myuser
+usermod -aG sudo myuser
+usermod -aG docker myuser
+---
+uname:myuser
+asswd: Sumanth@97
+---
+su - myuser
+
+sudo apt update
+sudo apt install -y docker.io
+sudo usermod -aG docker $USER
+newgrp docker
+
+minikube start --driver=docker
+-----------
+minikube stallation:
+curl -LO https://github.com/kubernetes/minikube/releases/latest/download/minikube-linux-amd64
+sudo install minikube-linux-amd64 /usr/local/bin/minikube && rm minikube-linux-amd64
+
+sudo apt update
+sudo apt install -y docker.io
+sudo usermod -aG docker $USER
+newgrp docker
+
+minikube start --driver=docker
+----------
+kubectl stallation:
+# Download kubectl v1.30.0 binary
+curl -LO "https://dl.k8s.io/release/v1.30.0/bin/linux/amd64/kubectl"
+
+# Download the SHA256 checksum file for verification
+curl -LO "https://dl.k8s.io/release/v1.30.0/bin/linux/amd64/kubectl.sha256"
+
+# Verify the binary (should print nothing if correct, or 'OK' if using sha256sum -c)
+	
+
+chmod +x kubectl
+sudo mv kubectl /usr/local/bin/
+
+kubectl version --client
+NOTE: Before installing first know the architecture type using: uname -m (x86-64 - 64-bit(AMD))
