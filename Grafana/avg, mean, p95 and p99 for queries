@@ -1,0 +1,768 @@
+Install postgresql using docker:
+
+docker run -itd --name postgres -e POSTGRES_USER=admin -e POSTGRES_PASSWORD=admin123 -e POSTGRES_DB=monitoringdb -p 5432:5432 postgres:14
+================================================================================
+Install Grafana Using Helm:
+---
+Command to install helm: 
+curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+---
+Add Grafana Helm repo:
+helm repo add grafana https://grafana.github.io/helm-charts
+helm repo update
+---
+Install Grafana:
+helm install grafana grafana/grafana --namespace monitoring --create-namespace --set adminUser=admin --set adminPassword=admin123 --set service.type=NodePort
+
+This will:
+Create the monitoring namespace (if not exists)
+Set Grafana admin user to admin / admin123
+Expose the Grafana UI via a NodePort
+---
+Get Grafana access URL:
+If you're using Minikube:
+minikube service grafana -n monitoring --url
+
+If you cant access grafana then follow below steps.
+---
+Change Grafana service to LoadBalancer:
+helm upgrade grafana grafana/grafana \
+  -n monitoring \
+  --set service.type=LoadBalancer
+---
+minikube tunnel
+---
+kubectl get svc grafana -n monitoring
+---
+Use kubectl port-forward:
+kubectl port-forward --address 0.0.0.0 svc/grafana -n monitoring 3000:80
+
+http://vm-ip:3000
+
+---
+Access Grafana:
+Open the URL in your browser.
+Login with:
+Username: admin
+Password: admin123
+---
+================================================================================
+Helm commands to install Prometheus
+---
+Add Prometheus Helm Repo:
+helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
+helm repo update
+---
+Create Namespace (optional but recommended):
+kubectl create namespace monitoring
+---
+Install Prometheus Using Helm:
+
+Helm command to expose Prometheus using a LoadBalancer service:
+helm install prometheus prometheus-community/prometheus \
+  -n monitoring \
+  --set server.service.type=LoadBalancer
+
+minikube tunnel
+
+This will install:
+Prometheus server
+Alertmanager
+Node Exporter
+Pushgateway
+---
+Verify Installation:
+kubectl get pods -n monitoring
+kubectl get svc -n monitoring
+---
+Access Prometheus UI:
+Port-forward Prometheus server:
+kubectl port-forward --address 0.0.0.0 svc/prometheus-server -n monitoring 9090:80
+
+
+minikube tunnel
+
+---
+
+
+================================================================================
+Objective:
+You want to scrape the following PostgreSQL query performance metrics into Prometheus → Grafana:
+pg_stat_statements_query_stats_calls
+pg_stat_statements_query_stats_max_time
+pg_stat_statements_query_stats_mean_time
+pg_stat_statements_query_duration_histogram_bucket
+pg_stat_statements_query_duration_histogram_count
+pg_stat_statements_query_duration_histogram_sum
+p95 / p99 percentiles for query duration
+-----------------
+Solution:
+We'll use the postgres_exporter from prometheus-community and a custom queries.yaml file that:
+Scrapes pg_stat_statements
+Computes histogram data needed for p95/p99
+================================================================================
+Steps to scrape PostgreSQL metrics:
+
+Enable pg_stat_statements extension in PostgreSQL
+Step-01: Login to your DB
+docker exec -it <postgres_container_name> psql -U <your_postgres_user> -d <your_db>
+EX:
+docker exec -it postgres psql -U admin -d monitoringdb
+
+Then run:
+CREATE EXTENSION IF NOT EXISTS pg_stat_statements;
+
+Step-02: Check it's working
+SELECT * FROM pg_stat_statements LIMIT 5;
+---
+ADDING these to config file:
+And ensure these lines are in postgresql.conf
+shared_preload_libraries = 'pg_stat_statements'
+track_activity_query_size = 2048
+
+
+Step-03: Enter the container
+docker exec -it postgres bash
+
+Step-04: Find the postgresql.conf file:
+find / -name postgresql.conf
+
+Common locations:
+/var/lib/postgresql/data/postgresql.conf
+/var/lib/postgresql/data/pgdata/postgresql.conf
+/usr/share/postgresql/postgresql.conf.sample (not the active one)
+
+Step-05: 
+Edit the file using vi or nano (if available)
+vi /var/lib/postgresql/data/postgresql.conf
+
+If its not available then:
+
+
+(OR)
+
+Update/add the config lines using sed(insie container):
+
+Step-06: First, check if the config already exists
+grep shared_preload_libraries /var/lib/postgresql/data/postgresql.conf
+
+Output:
+#shared_preload_libraries = ''  # (change requires restart)
+
+
+Step-07: Now run this inside the container to uncomment and set it
+sed -i "s/^#shared_preload_libraries = ''/shared_preload_libraries = 'pg_stat_statements'/" /var/lib/postgresql/data/postgresql.conf
+
+Step-08: Then check if it was updated correctly: 
+grep shared_preload_libraries /var/lib/postgresql/data/postgresql.conf
+Output:
+shared_preload_libraries = 'pg_stat_statements'
+---
+Step-09: Now configure track_activity_query_size
+grep track_activity_query_size /var/lib/postgresql/data/postgresql.conf
+Output:
+#track_activity_query_size = 1024       # (change requires restart)
+
+Step-10: To update it to 2048, run this inside the container:
+sed -i "s/^#track_activity_query_size = 1024/track_activity_query_size = 2048/" /var/lib/postgresql/data/postgresql.conf
+
+Step-11: Then confirm it worked
+grep track_activity_query_size /var/lib/postgresql/data/postgresql.conf
+Output:
+track_activity_query_size = 2048
+
+Also make sure these are configured:
+pg_stat_statements.track = all
+pg_stat_statements.save = on
+===
+Step-12: Then check if pg_stat_statements.track is available
+grep pg_stat_statements.track /var/lib/postgresql/data/postgresql.conf
+
+Step-13: If the line doesn't exist (or is commented differently), you can also append it explicitly
+echo "pg_stat_statements.track = 'all'" >> /var/lib/postgresql/data/postgresql.conf
+
+Step-14: Then check if it was updated correctly: 
+grep pg_stat_statements.track /var/lib/postgresql/data/postgresql.conf
+Output:
+pg_stat_statements.track = 'all'
+
+Step-15: Then check if pg_stat_statements.save is available
+grep pg_stat_statements.save /var/lib/postgresql/data/postgresql.conf
+
+Step-16: If the line doesn't exist (or is commented differently), you can also append it explicitly
+echo "pg_stat_statements.save = on" >> /var/lib/postgresql/data/postgresql.conf
+
+Step-17: Then check if it was updated correctly: 
+grep pg_stat_statements.save /var/lib/postgresql/data/postgresql.conf
+Output:
+pg_stat_statements.save = on
+-------------------------
+
+
+Step-18: Finally, restart the container to apply the changes
+exit
+
+Step-19: Then on your host
+docker restart postgres
+
+Step-14: Now pg_stat_statements will fully function with these configs active. You can validate with:
+docker exec -it postgres psql -U admin -d monitoringdb -c "SELECT * FROM pg_stat_statements LIMIT 5;"
+
+
+Output:
+ userid | dbid  | toplevel |       queryid        |                                                        query               
+                                         | plans | total_plan_time | min_plan_time | max_plan_time | mean_plan_time | stddev_plan_time | calls | total_exec_time | min_exec_time | max_exec_time | mean_exec_time |  stddev_exec_time   | rows | shared_blks_hit | shared_blks_read | shared_blks_dirtied | shared_blks_written | local_blks_hit | local_blks_read | local_blks_dirtied | local_blks_written | temp_blks_read | temp_blks_written | blk_read_time | blk_write_time | wal_records | wal_fpi | wal_bytes      
+--------+-------+----------+----------------------+---------------------------------------------------------------------------------------------------------------------+-------+-----------------+---------------+---------------+----------------+------------------+-------+-----------------+---------------+---------------+----------------+---------------------+------+-----------------+------------------+---------------------+---------------------+----------------+-----------------+--------------------+--------------------+----------------+-------------------+---------------+----------------+-------------+---------+-----------     
+     10 | 16384 | t        |  -144325866263766785 | SELECT * FROM pg_stat_statements LIMIT $1                                  
+                                         |     0 |               0 |             0 |             0 |              0 |          
+      0 |     4 |        1.089606 |       0.14673 |      0.551857 |      0.2724015 | 0.16364428093046823 |    9 |              
+ 0 |                0 |                   0 |                   0 |              0 |               0 |                  0 |                  0 |              0 |                 0 |             0 |              0 |           0 |       0 |         0      
+     10 | 16384 | t        | -7949564536453581318 | SELECT query, calls, mean_exec_time, total_exec_time FROM pg_stat_statements ORDER BY total_exec_time DESC LIMIT $1 |     0 |               0 |             0 |             0 |              0 |          
+      0 |     2 |        1.975582 |      0.225987 |      1.749595 |       0.987791 |            0.761804 |    4 |              
+ 6 |                0 |                   0 |                   0 |              0 |               0 |                  0 |                  0 |              0 |                 0 |             0 |              0 |           0 |       0 |         0      
+     10 | 16384 | t        | -8063160503150200351 | CREATE EXTENSION IF NOT EXISTS pg_stat_statements                          
+                                         |     0 |               0 |             0 |             0 |              0 |          
+      0 |     1 |        5.371085 |      5.371085 |      5.371085 |       5.371085 |                   0 |    0 |              
+22 |                4 |                   1 |                   0 |              0 |               0 |                  0 |                  0 |              0 |                 0 |             0 |              0 |           0 |       0 |         0      
+(3 rows)
+
+
+==================
+That output is the column headers from the pg_stat_statements view — which means pg_stat_statements is now fully enabled and working
+To view actual query performance, just run:
+docker exec -it postgres psql -U admin -d monitoringdb -c "SELECT query, calls, mean_exec_time, total_exec_time FROM pg_stat_statements ORDER BY total_exec_time DESC LIMIT 10;"
+
+Output:
+                   query                   | calls |   mean_exec_time    |   total_exec_time   
+-------------------------------------------+-------+---------------------+---------------------
+ SELECT * FROM pg_stat_statements LIMIT $1 |     1 | 0.22200799999999998 | 0.22200799999999998
+(1 row)
+==================
+NOW ITS TIME TO SET EXPORTER:
+
+2️⃣ Use Custom queries.yaml for Exporter
+Create a file named queries.yaml with this content:
+vim queries.yaml
+
+pg_stat_statements:
+  query_stats:
+    query: |
+      SELECT
+        queryid,
+        query,
+        calls,
+        total_time,
+        mean_time,
+        max_time
+      FROM pg_stat_statements
+      WHERE calls > 0
+    metrics:
+      - queryid:
+          usage: "LABEL"
+          description: "Query ID"
+      - query:
+          usage: "LABEL"
+          description: "Query text"
+      - calls:
+          usage: "COUNTER"
+          description: "Number of times executed"
+      - total_time:
+          usage: "COUNTER"
+          description: "Total execution time of query"
+      - mean_time:
+          usage: "GAUGE"
+          description: "Average execution time"
+      - max_time:
+          usage: "GAUGE"
+          description: "Max execution time"
+
+pg_stat_statements_histogram:
+  query: |
+    SELECT
+      queryid,
+      width_bucket(total_time, 0, 1000, 100) AS bucket,
+      count(*) AS count,
+      sum(total_time) AS sum
+    FROM pg_stat_statements
+    GROUP BY queryid, bucket;
+  metrics:
+    - queryid:
+        usage: "LABEL"
+        description: "Query ID"
+    - bucket:
+        usage: "LABEL"
+        description: "Bucket index (0–1000ms)"
+    - count:
+        usage: "COUNTER"
+        description: "Number of queries in this bucket"
+    - sum:
+        usage: "COUNTER"
+        description: "Sum of durations in this bucket"
+
+
+
+This gives you bucketed histogram-like metrics for approximating p95/p99.
+-----------------
+3️⃣ Create a ConfigMap in Kubernetes
+kubectl create configmap postgres-exporter-queries \
+  --from-file=queries.yaml=./queries.yaml \
+  -n monitoring
+
+[kubectl create configmap postgres-exporter-queries --from-file=queries.yaml -n monitoring]
+-----------------
+4️⃣ Modify Your postgres-exporter.yaml Deployment
+Update it like this:
+Deploy PostgreSQL Exporter (postgres-exporter.yaml)
+vim postgres-exporter.yaml
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: postgres-exporter
+  namespace: monitoring
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: postgres-exporter
+  template:
+    metadata:
+      labels:
+        app: postgres-exporter
+    spec:
+      containers:
+        - name: postgres-exporter
+          image: quay.io/prometheuscommunity/postgres-exporter
+          ports:
+            - containerPort: 9187
+          env:
+            - name: DATA_SOURCE_NAME
+              value: "postgresql://admin:admin123@postgres:5432/monitoringdb?sslmode=disable"
+            - name: PG_EXPORTER_EXTEND_QUERY_PATH
+              value: /etc/postgres-exporter/queries.yaml
+          volumeMounts:
+            - name: custom-queries
+              mountPath: /etc/postgres-exporter/queries.yaml
+              subPath: queries.yaml
+      volumes:
+        - name: custom-queries
+          configMap:
+            name: postgres-exporter-queries
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres-exporter
+  namespace: monitoring
+spec:
+  type: NodePort
+  selector:
+    app: postgres-exporter
+  ports:
+    - port: 9187
+      targetPort: 9187
+      nodePort: 32640  # Optional: explicitly define NodePort
+------
+kubectl apply -f postgres-exporter.yaml
+kubectl delete -f postgres-exporter.yaml
+------------------------------------------------------
+kubectl logs -n monitoring deployment/postgres-exporter | grep -i query
+=======================================================
+Present scenario:
+i have Prometheus running as a pod and posqgresql as acontainer  i preferred to setup a new exporter that runs as container along with PostgreSQL
+
+vim queries.yaml
+
+pg_stat_statements_query_stats:
+  query: |
+    SELECT
+      queryid,
+      query,
+      calls,
+      total_exec_time,
+      (total_exec_time / NULLIF(calls, 0)) AS mean_time,
+      max_exec_time
+    FROM pg_stat_statements
+    WHERE calls > 0
+  metrics:
+    - queryid:
+        usage: "LABEL"
+        description: "Query ID"
+    - query:
+        usage: "LABEL"
+        description: "Query text"
+    - calls:
+        usage: "COUNTER"
+        description: "Number of times executed"
+    - total_exec_time:
+        usage: "COUNTER"
+        description: "Total execution time of query"
+    - mean_time:
+        usage: "GAUGE"
+        description: "Average execution time"
+    - max_exec_time:
+        usage: "GAUGE"
+        description: "Max execution time"
+
+
+pg_stat_statements_query_duration_histogram:
+  query: |
+    SELECT
+      queryid,
+      width_bucket(total_exec_time / NULLIF(calls, 0), 0, 2000, 100) AS bucket,
+      count(*) AS count,
+      sum(total_exec_time) AS sum
+    FROM pg_stat_statements
+    WHERE calls > 0
+    GROUP BY queryid, bucket
+  metrics:
+    - queryid:
+        usage: "LABEL"
+        description: "Query ID"
+    - bucket:
+        usage: "LABEL"
+        description: "Latency bucket (0–2000ms)"
+    - count:
+        usage: "COUNTER"
+        description: "Number of queries in this bucket"
+    - sum:
+        usage: "COUNTER"
+        description: "Sum of durations in this bucket"
+
+
+Run Postgres Exporter Container:
+
+docker run -itd --name pg-exporter \
+  --network=host \
+  -e DATA_SOURCE_NAME="postgresql://admin:admin123@localhost:5432/monitoringdb?sslmode=disable" \
+  -e PG_EXPORTER_EXTEND_QUERY_PATH=/etc/queries.yaml \
+  -v /home/myuser/queries.yaml:/etc/queries.yaml \
+  quay.io/prometheuscommunity/postgres-exporter
+
+docker rm -f pg-exporter
+docker run -itd --name pg-exporter \
+  --network=host \
+  -e DATA_SOURCE_NAME="postgresql://admin:admin123@localhost:5432/monitoringdb?sslmode=disable" \
+  -e PG_EXPORTER_EXTEND_QUERY_PATH=/etc/queries.yaml \
+  -v /home/myuser/queries.yaml:/etc/queries.yaml \
+  quay.io/prometheuscommunity/postgres-exporter
+
+verify logs: docker logs pg-exporter | grep -i error
+
+
+use this to access metrics: http://34.66.117.149:9187/metrics
+
+Add Exporter to Prometheus
+Now just add the following scrape config in your prometheus.yml:
+scrape_configs:
+  - job_name: 'postgres-exporter'
+    static_configs:
+      - targets: ['<your-host-ip>:9187']
+
+
+Verify the Metrics:
+curl -s http://34.66.117.149:9187/metrics | grep pg_stat_statements_query_stats
+curl -s http://34.66.117.149:9187/metrics | grep pg_stat_statements_query_duration_histogram
+---------------------------------------------
+---------------------------------------------
+Once everything is running fine then in Grafana dashboard:
+Panel Title: Top Queries by Avg/Max Execution Time
+topk(10, pg_stat_statements_query_stats_mean_time)
+
+In Visualization, use Table or Bar chart(bar chart is giving more flexibility).
+Add Tooltip mode: All series for readability.
+=============================================
+
+📊 To Calculate p95 / p99 Percentiles in Prometheus
+You can now use these PromQL expressions:
+# p95 duration (in milliseconds)
+histogram_quantile(0.95, sum by (le, queryid) (
+  rate(pg_stat_statements_query_duration_histogram_count[5m])
+))
+
+# p99 duration
+histogram_quantile(0.99, sum by (le, queryid) (
+  rate(pg_stat_statements_query_duration_histogram_count[5m])
+))
+
+🔁 Adjust [5m] for your desired time range (e.g., [1h], [30s], etc.).
+
+✅ Next Steps
+In Grafana: Create a panel → Query → Paste the above PromQL
+
+Visualize: Use queryid or query label to filter/query-specific stats
+
+Optional: Group/label by query text for human-readable context:
+
+histogram_quantile(0.95, sum by (le, query) (
+  rate(pg_stat_statements_query_duration_histogram_count[5m])
+))
+
+
+
+
+Verify Exporter can connect to the DB
+docker exec -it pg-exporter sh
+apt update && apt install -y postgresql-client
+psql postgresql://admin:admin123@host.docker.internal:5432/monitoringdb
+
+
+
+
+
+
+
+Install psql (PostgreSQL Client) on Host Machine
+sudo apt update
+sudo apt install postgresql-client -y
+
+Test DB Connectivity From Host
+psql postgresql://admin:admin123@localhost:5432/monitoringdb
+Or if you're running it on another IP: psql postgresql://admin:admin123@<postgres_ip>:5432/monitoringdb
+
+You should be able to connect and run:
+SELECT 1;
+
+------------------------------------------------------
+ADDING postgres-exporter as a scrape job to Prometheus:
+
+Create a file named prometheus-additional-scrape-config.yaml:
+vim prometheus-additional-scrape-config.yaml
+
+# prometheus-additional-scrape-config.yaml
+- job_name: 'postgres-exporter'
+  static_configs:
+    - targets: ['postgres-exporter.monitoring.svc.cluster.local:9187']
+-----
+NEW:
+vim extra-scrape-config.yaml
+- job_name: 'postgres-exporter'
+  static_configs:
+    - targets: ['postgres-exporter.monitoring.svc.cluster.local:9187']
+
+kubectl create configmap prometheus-additional-scrape-configs \
+  --from-file=extra-scrape-config.yaml \
+  -n monitoring
+
+helm upgrade prometheus prometheus-community/prometheus \
+  -n monitoring \
+  --set server.extraScrapeConfigsSecret.enabled=true \
+  --set server.extraScrapeConfigsSecret.name=prometheus-additional-scrape-configs \
+  --set server.extraScrapeConfigsSecret.key=extra-scrape-config.yaml
+-------
+LATEST:
+vim override-values.yaml
+
+server:
+  extraVolumes:
+    - name: additional-scrape-configs
+      configMap:
+        name: prometheus-additional-scrape-configs
+
+  extraVolumeMounts:
+    - name: additional-scrape-configs
+      mountPath: /etc/prometheus/additional-scrape-configs
+      readOnly: true
+
+  extraScrapeConfigs: /etc/prometheus/additional-scrape-configs/extra-scrape-config.yaml
+
+
+helm upgrade prometheus prometheus-community/prometheus \
+  -n monitoring \
+  -f override-values.yaml
+[After this step Prometheus will re-deploy again]
+
+
+kubectl exec -it prometheus-server-7b4cd9b7c8-8d6xt -n monitoring -c prometheus-server -- ls /etc/prometheus/additional-scrape-configs
+OUTPUT:
+extra-scrape-config.yaml
+
+
+kubectl exec -it prometheus-server-d8c947647-6cq4r -n monitoring -c prometheus-server -- cat /etc/config/prometheus.yml | grep -A5 'job_name: postgres-exporter'
+-----------------
+
+
+[Replace the target with your actual exporter service DNS name (which is correct if it's deployed in the same cluster).]
+
+Then apply it using:
+helm upgrade prometheus prometheus-community/prometheus -n monitoring -f prometheus-additional-scrape-config.yaml
+[.\helm.exe upgrade prometheus prometheus-community/prometheus -n monitoring -f .\prometheus-additional-scrape-config.yaml ]
+[.\helm.exe repo add prometheus-community https://prometheus-community.github.io/helm-charts]
+[.\helm.exe repo update]
+NOTE:
+it will not affect your old jobs, as long as you only add the new config (i.e., extraScrapeConfigs) in your override file and don’t overwrite other values. 
+===========================
+Check if the configuration applied successfully or not:
+check directly inside the prometheus.yml
+kubectl get pods -n monitoring
+
+kubectl exec -it prometheus-server-7b4cd9b7c8-m8r27 -n monitoring -c prometheus-server -- sh
+[kubectl exec -it prometheus-server-7b4cd9b7c8-snrbw -n monitoring -c prometheus-server -- cat /etc/config/prometheus.yml]
+ls /etc/prometheus
+cat /etc/prometheus/prometheus.yml
+
+ERROR:
+sed -i '/^scrape_configs:/a\  - job_name: "postgres-exporter"\n    static_configs:\n      - targets: ["postgres-e
+xporter.monitoring.svc.cluster.local:9187"]' /etc/config/prometheus.yml
+sed: can't create temp file '/etc/config/prometheus.ymlFrRvwr': Read-only file system
+
+Resolution: You already created a custom scrape config file (extra-scrape-config.yaml) and ConfigMap. Now, just make sure you're doing it the Helm-approved way.
+
+Recreate the ConfigMap:
+kubectl create configmap prometheus-additional-scrape-configs \
+  --from-file=extra-scrape-config.yaml \
+  -n monitoring \
+  --dry-run=client -o yaml | kubectl apply -f -
+OUTPUT:
+kubectl create configmap prometheus-additional-scrape-configs \
+  --from-file=extra-scrape-config.yaml \
+  -n monitoring \
+  --dry-run=client -o yaml | kubectl apply -f -
+Warning: resource configmaps/prometheus-additional-scrape-configs is missing the kubectl.kubernetes.io/last-applied-configuration annotation which is required by kubectl apply. kubectl apply should only be used on resources created declaratively by either kubectl create --save-config or kubectl apply. The missing annotation will be patched automatically.
+configmap/prometheus-additional-scrape-configs configured
+
+
+
+Upgrade Prometheus using Helm (this is the key part):
+helm upgrade prometheus prometheus-community/prometheus \
+  -n monitoring \
+  --set server.extraScrapeConfigsSecret.enabled=false \
+  --set server.extraScrapeConfigs.name=prometheus-additional-scrape-configs \
+  --set server.extraScrapeConfigs.key=extra-scrape-config.yaml
+
+To confirm it worked:
+After a few seconds, run:
+kubectl exec -it prometheus-server-7b4cd9b7c8-snrbw -n monitoring -c prometheus-server -- cat /etc/config/prometheus.yml | grep -A5 postgres-exporter
+
+You should see your job appended.
+
+
+======================================
+🔁 Good Practice
+If you're worried about unintentional changes, you can:
+Backup current values: helm get values prometheus -n monitoring > backup-values.yaml
+
+Merge your changes into a full file: cp backup-values.yaml full-values.yaml
+
+Append your extraScrapeConfigs to full-values.yaml, then:
+helm upgrade prometheus prometheus-community/prometheus \
+  -n monitoring \
+  -f full-values.yaml
+
+To check metrics directly:
+kubectl port-forward --address 0.0.0.0 svc/postgres-exporter -n monitoring 9187:9187
+http://34.66.117.149:9187/metrics
+
+
+
+
+
+
+
+
+
+
+Search and modify/add these lines:
+shared_preload_libraries = 'pg_stat_statements'
+track_activity_query_size = 2048
+
+Restart the container for changes to take effect:
+docker restart postgres
+
+🔄 Restart PostgreSQL container if you updated config.
+================================================================================
+To verify it’s working after restart:
+docker exec -it postgres psql -U admin -d monitoringdb
+
+Then: SELECT * FROM pg_stat_statements LIMIT 5;
+If it shows data, you're all set!
+
+================================================================================
+kubectl create configmap prometheus-additional-scrape-configs \
+  --from-file=extra-scrape-config.yaml \
+  -n monitoring \
+  --dry-run=client -o yaml | kubectl apply -f -
+
+helm upgrade prometheus prometheus-community/prometheus \
+  -n monitoring \
+  --set server.extraScrapeConfigs.enabled=true \
+  --set server.extraScrapeConfigs.name=prometheus-additional-scrape-configs \
+  --set server.extraScrapeConfigs.key=extra-scrape-config.yaml
+
+================================================================================
+Prometheus redeploy:
+vim values.yaml
+
+
+
+server:
+  extraScrapeConfigs: |
+    - job_name: 'postgres-exporter'
+      static_configs:
+        - targets: ['postgres-exporter.monitoring.svc.cluster.local:9187']
+
+
+helm install prometheus prometheus-community/prometheus -f values.yaml -n monitoring
+
+kubectl exec -n monitoring -it prometheus-server-7b4cd9b7c8-m8r27  -c prometheus-server -- grep -A 5 'postgres-exporter' /etc/config/prometheus.yml
+
+
+
+helm uninstall prometheus -n monitoring
+
+================================================================================
+you can create a ConfigMap that is editable, and then use it to configure Prometheus. Here’s how you can do it step-by-step:
+Create the ConfigMap manually
+vim extra-scrape-config.yaml
+
+- job_name: 'postgres-exporter'
+  static_configs:
+    - targets: ['postgres-exporter.monitoring.svc.cluster.local:9187']
+
+
+Then create a ConfigMap from it:
+kubectl create configmap prometheus-extra-scrape --from-file=extra-scrape-config.yaml -n monitoring
+
+You can now edit this ConfigMap any time using:
+kubectl edit configmap prometheus-extra-scrape -n monitoring
+
+Step 2: Reference the ConfigMap in values.yaml
+vim values.yaml
+server:
+  extraScrapeConfigsSecret:
+    enabled: true
+    name: prometheus-extra-scrape
+    key: extra-scrape-config.yaml
+
+Step 3: Reinstall or upgrade Prometheus
+helm install prometheus prometheus-community/prometheus -f values.yaml -n monitoring
+
+================================================================================
+
+================================================================================
+
+================================================================================
+
+================================================================================
+
+================================================================================
+
+================================================================================
+
+================================================================================
+
+================================================================================
+
+================================================================================
+
+minikube delete
+sudo minikube start --driver=none
+helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
+helm repo update
+helm install prometheus prometheus-community/prometheus -n monitoring --create-namespace
+kubectl get svc prometheus-server -n monitoring
+http://34.66.117.149:<NodePort>
+---
+sudo apt update && sudo apt install -y conntrack
+
+sudo minikube start --driver=none
