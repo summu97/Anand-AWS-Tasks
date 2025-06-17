@@ -276,26 +276,26 @@ pg_stat_statements:
           usage: "GAUGE"
           description: "Max execution time"
 
-pg_stat_statements_histogram:
+pg_stat_statements_query_duration_histogram:
   query: |
     SELECT
       queryid,
-      width_bucket(total_time, 0, 1000, 100) AS bucket,
-      count(*) AS count,
-      sum(total_time) AS sum
+      width_bucket(total_exec_time, 0, 1000, 10) AS le,
+      COUNT(*) AS bucket_count,
+      SUM(total_exec_time) AS bucket_sum
     FROM pg_stat_statements
-    GROUP BY queryid, bucket;
+    GROUP BY queryid, le
   metrics:
     - queryid:
         usage: "LABEL"
         description: "Query ID"
-    - bucket:
+    - le:
         usage: "LABEL"
-        description: "Bucket index (0–1000ms)"
-    - count:
+        description: "Histogram bucket"
+    - bucket_count:
         usage: "COUNTER"
         description: "Number of queries in this bucket"
-    - sum:
+    - bucket_sum:
         usage: "COUNTER"
         description: "Sum of durations in this bucket"
 
@@ -409,23 +409,22 @@ pg_stat_statements_query_duration_histogram:
   query: |
     SELECT
       queryid,
-      width_bucket(total_exec_time / NULLIF(calls, 0), 0, 2000, 100) AS bucket,
-      count(*) AS count,
-      sum(total_exec_time) AS sum
+      width_bucket(total_exec_time, 0, 1000, 10) AS le,
+      COUNT(*) AS bucket_count,
+      SUM(total_exec_time) AS bucket_sum
     FROM pg_stat_statements
-    WHERE calls > 0
-    GROUP BY queryid, bucket
+    GROUP BY queryid, le
   metrics:
     - queryid:
         usage: "LABEL"
         description: "Query ID"
-    - bucket:
+    - le:
         usage: "LABEL"
-        description: "Latency bucket (0–2000ms)"
-    - count:
+        description: "Histogram bucket"
+    - bucket_count:
         usage: "COUNTER"
         description: "Number of queries in this bucket"
-    - sum:
+    - bucket_sum:
         usage: "COUNTER"
         description: "Sum of durations in this bucket"
 
