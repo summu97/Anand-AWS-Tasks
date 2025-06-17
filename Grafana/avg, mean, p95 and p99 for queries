@@ -276,26 +276,26 @@ pg_stat_statements:
           usage: "GAUGE"
           description: "Max execution time"
 
-pg_stat_statements_query_duration_histogram:
+pg_stat_statements_histogram:
   query: |
     SELECT
       queryid,
-      width_bucket(total_exec_time, 0, 1000, 10) AS le,
-      COUNT(*) AS bucket_count,
-      SUM(total_exec_time) AS bucket_sum
+      width_bucket(total_time, 0, 1000, 100) AS bucket,
+      count(*) AS count,
+      sum(total_time) AS sum
     FROM pg_stat_statements
-    GROUP BY queryid, le
+    GROUP BY queryid, bucket;
   metrics:
     - queryid:
         usage: "LABEL"
         description: "Query ID"
-    - le:
+    - bucket:
         usage: "LABEL"
-        description: "Histogram bucket"
-    - bucket_count:
+        description: "Bucket index (0–1000ms)"
+    - count:
         usage: "COUNTER"
         description: "Number of queries in this bucket"
-    - bucket_sum:
+    - sum:
         usage: "COUNTER"
         description: "Sum of durations in this bucket"
 
@@ -429,6 +429,8 @@ pg_stat_statements_query_duration_histogram:
         description: "Sum of durations in this bucket"
 
 
+
+
 Run Postgres Exporter Container:
 
 docker run -itd --name pg-exporter \
@@ -462,6 +464,7 @@ scrape_configs:
 Verify the Metrics:
 curl -s http://34.66.117.149:9187/metrics | grep pg_stat_statements_query_stats
 curl -s http://34.66.117.149:9187/metrics | grep pg_stat_statements_query_duration_histogram
+curl -s http://34.66.117.149:9187/metrics | grep pg_stat_statements_query_duration_histogram_bucket_count
 ---------------------------------------------
 ---------------------------------------------
 Once everything is running fine then in Grafana dashboard:
@@ -473,16 +476,40 @@ Add Tooltip mode: All series for readability.
 =============================================
 
 📊 To Calculate p95 / p99 Percentiles in Prometheus
-You can now use these PromQL expressions:
-# p95 duration (in milliseconds)
-histogram_quantile(0.95, sum by (le, queryid) (
-  rate(pg_stat_statements_query_duration_histogram_count[5m])
+Dashboard Panel: PostgreSQL Query Duration (p95)
+
+Panel Title:
+PostgreSQL Query Duration - P95
+Units:
+Time → seconds (or milliseconds, depending on your metric unit)
+[
+Dashboard Panel: PostgreSQL Query Duration (p99)
+histogram_quantile(0.99, sum by (le, queryid) (
+  rate(pg_stat_statements_query_duration_histogram_bucket_count[5m])
 ))
 
-# p99 duration
-histogram_quantile(0.99, sum by (le, queryid) (
-  rate(pg_stat_statements_query_duration_histogram_count[5m])
-))
+with: pg_stat_statements_query_stats_total_exec_time
+]
+Panel Title:
+PostgreSQL Query Duration - P99
+Units:
+Time → seconds (or milliseconds, depending on your metric unit)
+
+📊 Optional Table Panel: Top Slow Queries by P95
+If you want a table showing top slow queries (by queryid) sorted by p95:
+topk(10, histogram_quantile(0.95, sum by (le, queryid) (
+  rate(pg_stat_statements_query_duration_histogram_bucket_count[5m])
+)))
+
+Panel Title:
+Top 10 Slow Queries (P95 Latency)
+
+
+
+
+
+
+
 
 🔁 Adjust [5m] for your desired time range (e.g., [1h], [30s], etc.).
 
